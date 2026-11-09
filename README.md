@@ -361,3 +361,20 @@ In version `0.7.7.1`, we utilised `cat` to write the wrapper script which errone
 -   AUR user `networkException` for maintaining [Ungoogled Chromium on the AUR](https://aur.archlinux.org/packages/ungoogled-chromium-bin) and saving me a bunch of time in establishing the Helium package.
 -   AUR user `init_harsh` for their bash contributions which inspired the `helium-browser-flags.conf` support and [raising the issue originally](https://aur.archlinux.org/packages/helium-browser-bin#comment-1044045).
 -   @foutrelis for writing the [chromium-launcher](https://github.com/foutrelis/chromium-launcher).
+
+
+## Prebuilt packages via GitHub Actions
+
+This fork adds a workflow that builds the package on GitHub Actions, so you do not need an Arch machine to produce a `.pkg.tar.zst`.
+
+- `build.yml` runs `makepkg` through [heyhusen/archlinux-package-action](https://github.com/heyhusen/archlinux-package-action) inside an Arch container.
+- On manual dispatch or a push touching the packaging files, it builds the version currently in `PKGBUILD`.
+- Running it manually with an empty `version` input resolves the newest [imputnet/helium-linux](https://github.com/imputnet/helium-linux) release tag, rewrites `pkgver`, refreshes checksums, rebuilds, and publishes a release.
+
+All CI work lives on the `ci` branch; `main` is kept identical to upstream so it can be fast-forwarded at any time.
+
+Install a downloaded package with:
+
+```bash
+sudo pacman -U helium-browser-bin-<version>-1-x86_64.pkg.tar.zst
+```

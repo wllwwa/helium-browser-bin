@@ -1,0 +1,102 @@
+name: build-package
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "要打包的版本，留空则取 imputnet/helium-linux 最新 release tag"
+        required: false
+        default: ""
+  push:
+    branches: [ci]
+    paths:
+      - PKGBUILD
+      - "*.patch"
+      - .github/workflows/build.yml
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: build-package
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 确定版本号
+        id: ver
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          set -euo pipefail
+          ver="$INPUT_VERSION"
+          if [ -z "$ver" ]; then
+            ver=$(gh api repos/imputnet/helium-linux/releases/latest --jq .tag_name)
+          fi
+          echo "ver=$ver" >> "$GITHUB_OUTPUT"
+          echo "本次打包版本: $ver"
+
+      - name: 准备产物目录
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/out"
+          chmod 777 "$GITHUB_WORKSPACE/out"
+
+      - name: makepkg 打包
+        uses: heyhusen/archlinux-package-action@v3.0.1
+        env:
+          # action 在容器内 /home/builder/gh-action 构建，产物不会自动拷回，
+          # 这里直接指定输出到挂载的 workspace，避免包随容器销毁而丢失。
+          PKGDEST: /github/workspace/out
+        with:
+          path: .
+          pkgver: ${{ steps.ver.outputs.ver }}
+          updpkgsums: true
+          srcinfo: false
+          namcap: false
+          flags: "-cfs --noconfirm"
+          pgpkeys: "BE677C1989D35EAB2C5F26C9351601AD01D6378E"
+          pgpkeyserver: "hkps://keyserver.ubuntu.com"
+
+      - name: 发布到 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${{ steps.ver.outputs.ver }}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" ./out/*.pkg.tar.zst --clobber
+          else
+            gh release create "$tag" ./out/*.pkg.tar.zst \
+              --title "helium-browser-bin $tag" \
+              --notes "Automated build of helium $tag from upstream imputnet/helium-linux."
+          fi
+
+          # 只保留最新一个 release，旧的一并删掉 tag，避免永久堆积
+          for old in $(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName --jq '.[].tagName'); do
+            [ "$old" = "$tag" ] && continue
+            echo "清理旧 release: $old"
+            gh release delete "$old" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+          done
+
+      # 本次成功才清理，失败时保留记录便于排查；下次成功后一并清掉。
+      - name: 清理历史 run 记录
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/build.yml/runs?per_page=100" \
+            --jq '.workflow_runs[] | select(.id != '"$GITHUB_RUN_ID"') | .id' \
+          | while read -r id; do
+              [ -z "$id" ] && continue
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/runs/$id" >/dev/null
+              echo "已删除历史 run $id"
+            done

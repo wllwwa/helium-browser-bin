@@ -4,3 +4,8 @@
  * SPDX-License-Identifier: 0BSD
  */
 *
+
+# CI
+!.github/
+!.github/workflows/
+!.github/workflows/*.yml
